@@ -1,8 +1,3 @@
-/* kernel.h -- serial building blocks shared by the parallel and serial code.
- *
- * All matrices are N x N doubles stored row-major in one contiguous block:
- * element (i, j) lives at M[i*N + j].
- */
 #ifndef KERNEL_H
 #define KERNEL_H
 
