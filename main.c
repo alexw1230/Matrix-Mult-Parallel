@@ -1,7 +1,6 @@
-/*
- * Usage: mpirun -np P ./mm -n N [-r reps] [-s seed] [-e] [-p]
- *                          [-o results.csv] [-w raw_times.csv]
- */
+#define _GNU_SOURCE /* for sched_getcpu */
+#include <sched.h>
+
 #include "kernel.h"
 #include "mm_ring.h"
 
@@ -20,7 +19,11 @@ typedef struct {
     long seed;
     const char *csv; /* summary file (one row per run)          */
     const char *raw; /* per-rep timings; NULL = don't write one */
+    const char *ranks; /* per-rank timings; NULL = don't collect */
 } opts_t;
+
+/* Per-rank record gathered to root: the CPU core, then the NT phase times. */
+enum { R_CPU, R_TIMES, NR = R_TIMES + NT };
 
 static void usage(const char *prog)
 {
@@ -32,7 +35,8 @@ static void usage(const char *prog)
             "  -e       exact mode: integer-valued entries, must match serial exactly\n"
             "  -p       print A, B, C (only if N <= 16)\n"
             "  -o FILE  summary CSV, appended (default results.csv)\n"
-            "  -w FILE  per-rep timing CSV, appended (default: not written)\n",
+            "  -w FILE  per-rep timing CSV, appended (default: not written)\n"
+            "  -d FILE  per-rank timing CSV, appended (default: not collected)\n",
             prog);
 }
 
@@ -40,7 +44,7 @@ static void usage(const char *prog)
 static int parse_args(int argc, char **argv, opts_t *o)
 {
     o->N = 0; o->reps = 0; o->exact = 0; o->print = 0;
-    o->seed = 530; o->csv = "results.csv"; o->raw = NULL;
+    o->seed = 530; o->csv = "results.csv"; o->raw = NULL; o->ranks = NULL;
 
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i];
@@ -50,6 +54,7 @@ static int parse_args(int argc, char **argv, opts_t *o)
         else if (!strcmp(a, "-s") && has_val) o->seed = atol(argv[++i]);
         else if (!strcmp(a, "-o") && has_val) o->csv  = argv[++i];
         else if (!strcmp(a, "-w") && has_val) o->raw  = argv[++i];
+        else if (!strcmp(a, "-d") && has_val) o->ranks = argv[++i];
         else if (!strcmp(a, "-e")) o->exact = 1;
         else if (!strcmp(a, "-p")) o->print = 1;
         else return -1;
@@ -184,6 +189,10 @@ int main(int argc, char **argv)
     /* Root keeps every timed rep: times[rep*NT + phase], max over ranks. */
     double *times = (rank == 0) ? malloc((size_t)o.reps * NT * sizeof *times) : NULL;
 
+    /* Optional: every rank's own times, per rep: per_rank[(rep*P + r)*NR + field]. */
+    double *per_rank = (rank == 0 && o.ranks)
+                     ? malloc((size_t)o.reps * P * NR * sizeof *per_rank) : NULL;
+
     /* ---- Timed region; rep = -1 is an untimed warm-up ---- */
     for (int rep = -1; rep < o.reps; rep++) {
         double loc[NT], mx[NT];
@@ -211,6 +220,17 @@ int main(int argc, char **argv)
 
         if (rank == 0 && rep >= 0)
             memcpy(times + (size_t)rep * NT, mx, sizeof mx);
+
+        /* Diagnostic: gather every rank's times, not just the max. Runs after
+         * t3, so it is outside the timed region. */
+        if (o.ranks && rep >= 0) {
+            double rec[NR];
+            rec[R_CPU] = (double)sched_getcpu();
+            memcpy(rec + R_TIMES, loc, sizeof loc);
+            MPI_Gather(rec, NR, MPI_DOUBLE,
+                       per_rank ? per_rank + (size_t)rep * P * NR : NULL,
+                       NR, MPI_DOUBLE, 0, ring);
+        }
     }
 
     /* ---- Root: assemble C, run serial baseline, verify, report ---- */
@@ -274,6 +294,24 @@ int main(int argc, char **argv)
                 }
                 fclose(g);
             }
+        }
+
+        if (per_rank) {
+            FILE *h = open_csv(o.ranks,
+                "N,P,rep,rank,cpu,T_total,T_scatter,T_comp,T_comm,T_gather");
+            if (h) {
+                for (int r = 0; r < o.reps; r++)
+                    for (int k = 0; k < P; k++) {
+                        const double *d = per_rank + ((size_t)r * P + k) * NR;
+                        fprintf(h, "%d,%d,%d,%d,%d,%.9e,%.9e,%.9e,%.9e,%.9e\n",
+                                N, P, r, k, (int)d[R_CPU],
+                                d[R_TIMES + T_TOTAL], d[R_TIMES + T_SCATTER],
+                                d[R_TIMES + T_COMP],  d[R_TIMES + T_COMM],
+                                d[R_TIMES + T_GATHER]);
+                    }
+                fclose(h);
+            }
+            free(per_rank);
         }
 
         free(times);
