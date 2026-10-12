@@ -2,19 +2,24 @@ CC      = mpicc
 CFLAGS  = -O3 -march=native -std=c11 -Wall -Wextra
 LDLIBS  = -lm
 
-OBJS = main.o mm_ring.o kernel.o
+SRC   = src
+BUILD = build
+OBJS  = $(BUILD)/main.o $(BUILD)/mm_ring.o $(BUILD)/kernel.o
 
 mm: $(OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDLIBS)
 
-%.o: %.c
-	$(CC) $(CFLAGS) -c $<
+$(BUILD)/%.o: $(SRC)/%.c | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
 
-main.o:    main.c kernel.h mm_ring.h
-mm_ring.o: mm_ring.c mm_ring.h kernel.h
-kernel.o:  kernel.c kernel.h
+$(BUILD):
+	mkdir -p $@
+
+$(BUILD)/main.o:    $(SRC)/main.c $(SRC)/kernel.h $(SRC)/mm_ring.h
+$(BUILD)/mm_ring.o: $(SRC)/mm_ring.c $(SRC)/mm_ring.h $(SRC)/kernel.h
+$(BUILD)/kernel.o:  $(SRC)/kernel.c $(SRC)/kernel.h
 
 clean:
-	rm -f mm $(OBJS)
+	rm -rf mm $(BUILD)
 
 .PHONY: clean

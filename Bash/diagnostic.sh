@@ -15,7 +15,7 @@ set -euo pipefail
 export OMPI_MCA_coll_hcoll_enable=0
 
 cd "$SLURM_SUBMIT_DIR"
-make clean && make
+make -f Make/Makefile clean && make -f Make/Makefile
 
 RES=results/diag_${SLURM_JOB_ID}
 mkdir -p "$RES"

@@ -18,7 +18,7 @@ export OMPI_MCA_coll_hcoll_enable=0
 
 cd "$SLURM_SUBMIT_DIR"
 
-make clean && make
+make -f Make/Makefile clean && make -f Make/Makefile
 
 # One folder per job, so reruns never append to old results
 RES=results/${SLURM_JOB_ID}

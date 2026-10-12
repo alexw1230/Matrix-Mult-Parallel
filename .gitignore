@@ -2,3 +2,6 @@
 *.err
 *.csv
 /results
+mm
+build/
+*.o
