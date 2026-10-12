@@ -16,6 +16,7 @@ enum { T_TOTAL, T_SCATTER, T_COMP, T_COMM, T_GATHER, NT };
 
 typedef struct {
     int N, reps, exact, print;
+    double warmup;   /* seconds of untimed reps before timing starts */
     long seed;
     const char *csv; /* summary file (one row per run)          */
     const char *raw; /* per-rep timings; NULL = don't write one */
@@ -36,7 +37,8 @@ static void usage(const char *prog)
             "  -p       print A, B, C (only if N <= 16)\n"
             "  -o FILE  summary CSV, appended (default results.csv)\n"
             "  -w FILE  per-rep timing CSV, appended (default: not written)\n"
-            "  -d FILE  per-rank timing CSV, appended (default: not collected)\n",
+            "  -d FILE  per-rank timing CSV, appended (default: not collected)\n"
+            "  -W SECS  untimed warm-up time before timing (default 3; 0 = one rep)\n",
             prog);
 }
 
@@ -45,6 +47,7 @@ static int parse_args(int argc, char **argv, opts_t *o)
 {
     o->N = 0; o->reps = 0; o->exact = 0; o->print = 0;
     o->seed = 530; o->csv = "results.csv"; o->raw = NULL; o->ranks = NULL;
+    o->warmup = 3.0;
 
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i];
@@ -55,11 +58,12 @@ static int parse_args(int argc, char **argv, opts_t *o)
         else if (!strcmp(a, "-o") && has_val) o->csv  = argv[++i];
         else if (!strcmp(a, "-w") && has_val) o->raw  = argv[++i];
         else if (!strcmp(a, "-d") && has_val) o->ranks = argv[++i];
+        else if (!strcmp(a, "-W") && has_val) o->warmup = atof(argv[++i]);
         else if (!strcmp(a, "-e")) o->exact = 1;
         else if (!strcmp(a, "-p")) o->print = 1;
         else return -1;
     }
-    if (o->N <= 0 || o->reps < 0) return -1;
+    if (o->N <= 0 || o->reps < 0 || o->warmup < 0) return -1;
     return 0;
 }
 
@@ -106,6 +110,33 @@ static FILE *open_csv(const char *path, const char *header)
     fseek(f, 0, SEEK_END);
     if (ftell(f) == 0) fprintf(f, "%s\n", header);
     return f;
+}
+
+/* One full multiply: scatter, ring, gather. Fills this rank's phase times. */
+static void one_rep(const double *A, const double *BT, double *CT,
+                    double *A_cur, double *BT_loc, double *CT_loc,
+                    int N, int count, MPI_Comm ring, double loc[NT])
+{
+    ring_times_t rt;
+
+    MPI_Barrier(ring);
+    double t0 = MPI_Wtime();
+
+    MPI_Scatter(A,  count, MPI_DOUBLE, A_cur,  count, MPI_DOUBLE, 0, ring);
+    MPI_Scatter(BT, count, MPI_DOUBLE, BT_loc, count, MPI_DOUBLE, 0, ring);
+    double t1 = MPI_Wtime();
+
+    mm_ring(A_cur, BT_loc, CT_loc, N, ring, &rt);
+    double t2 = MPI_Wtime();
+
+    MPI_Gather(CT_loc, count, MPI_DOUBLE, CT, count, MPI_DOUBLE, 0, ring);
+    double t3 = MPI_Wtime();
+
+    loc[T_TOTAL]   = t3 - t0;
+    loc[T_SCATTER] = t1 - t0;
+    loc[T_COMP]    = rt.comp;
+    loc[T_COMM]    = rt.comm;
+    loc[T_GATHER]  = t3 - t2;
 }
 
 static double *must_alloc(size_t count, MPI_Comm comm)
@@ -193,37 +224,32 @@ int main(int argc, char **argv)
     double *per_rank = (rank == 0 && o.ranks)
                      ? malloc((size_t)o.reps * P * NR * sizeof *per_rank) : NULL;
 
-    /* ---- Timed region; rep = -1 is an untimed warm-up ---- */
-    for (int rep = -1; rep < o.reps; rep++) {
+    /* ---- Untimed warm-up: repeat full reps until o.warmup seconds have passed.
+     * Cores run ~2x slow for the first ~2 s of a run, so one rep is not enough
+     * when a rep is short. At least one warm-up rep always runs. Root decides
+     * when to stop and broadcasts it so every rank leaves the loop together. ---- */
+    int warm_reps = 0, more = 1;
+    double w0 = MPI_Wtime();
+    do {
+        double loc[NT];
+        one_rep(A, BT, CT, A_cur, BT_loc, CT_loc, N, count, ring, loc);
+        warm_reps++;
+        if (rank == 0) more = (MPI_Wtime() - w0 < o.warmup);
+        MPI_Bcast(&more, 1, MPI_INT, 0, ring);
+    } while (more);
+
+    /* ---- Timed reps ---- */
+    for (int rep = 0; rep < o.reps; rep++) {
         double loc[NT], mx[NT];
-        ring_times_t rt;
-
-        MPI_Barrier(ring);
-        double t0 = MPI_Wtime();
-
-        MPI_Scatter(A,  count, MPI_DOUBLE, A_cur,  count, MPI_DOUBLE, 0, ring);
-        MPI_Scatter(BT, count, MPI_DOUBLE, BT_loc, count, MPI_DOUBLE, 0, ring);
-        double t1 = MPI_Wtime();
-
-        mm_ring(A_cur, BT_loc, CT_loc, N, ring, &rt);
-        double t2 = MPI_Wtime();
-
-        MPI_Gather(CT_loc, count, MPI_DOUBLE, CT, count, MPI_DOUBLE, 0, ring);
-        double t3 = MPI_Wtime();
-
-        loc[T_TOTAL]   = t3 - t0;
-        loc[T_SCATTER] = t1 - t0;
-        loc[T_COMP]    = rt.comp;
-        loc[T_COMM]    = rt.comm;
-        loc[T_GATHER]  = t3 - t2;
+        one_rep(A, BT, CT, A_cur, BT_loc, CT_loc, N, count, ring, loc);
         MPI_Reduce(loc, mx, NT, MPI_DOUBLE, MPI_MAX, 0, ring);
 
-        if (rank == 0 && rep >= 0)
+        if (rank == 0)
             memcpy(times + (size_t)rep * NT, mx, sizeof mx);
 
         /* Diagnostic: gather every rank's times, not just the max. Runs after
-         * t3, so it is outside the timed region. */
-        if (o.ranks && rep >= 0) {
+         * the rep's timed region ends. */
+        if (o.ranks) {
             double rec[NR];
             rec[R_CPU] = (double)sched_getcpu();
             memcpy(rec + R_TIMES, loc, sizeof loc);
@@ -265,10 +291,10 @@ int main(int argc, char **argv)
 
         if (o.print && N <= 16) print_matrix("C", C, N);
 
-        printf("N=%d P=%d reps=%d mode=%s host=%s\n"
+        printf("N=%d P=%d reps=%d warmup_reps=%d mode=%s host=%s\n"
                "  T_total=%.6e  (scatter %.3e, comp %.3e, comm %.3e, gather %.3e)\n"
                "  T_serial=%.6e  speedup=%.3f  efficiency=%.3f  max_err=%.3e  %s\n",
-               N, P, o.reps, o.exact ? "exact" : "float", host,
+               N, P, o.reps, warm_reps, o.exact ? "exact" : "float", host,
                med[T_TOTAL], med[T_SCATTER], med[T_COMP], med[T_COMM], med[T_GATHER],
                T_serial, speedup, eff, max_err, pass ? "PASS" : "FAIL");
         fflush(stdout);
