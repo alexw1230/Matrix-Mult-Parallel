@@ -1,4 +1,4 @@
-# Parallel Dense Matrix Multiplication #
+# Parallel Matrix Multiplication #
 
 AMS 530 Project 2, Stony Brook Graduate School
 
@@ -143,6 +143,113 @@ Matrix-Mult-Parallel/
 │   └── *.sh               # Various bash files for testing
 │                               
 ├── README.md
-├── .gitignore
-└── requirements.txt
+└── .gitignore
 ```
+
+## Compilation & Execution ##
+
+### Full Experiment Execution ###
+
+> Run from repo root
+
+```
+sbatch *.sh
+```
+
+Where * is the experiment you wish to run.
+
+Each experiment follows the same general structure
+
+```
+module load gcc/13.2.0
+module load openmpi/gcc13.2/4.1.6
+
+make
+
+mpirun ./mm
+
+```
+
+The following arguments can be applied to the run
+
+| Flag | Meaning |
+| -------- | -------- |
+| `-n` | Matrix size |
+| `-r` | Number of timed repititions |
+| `-W` | Untimed warmup time before timed runs |
+| `-e` | Exact mode |
+| `-p` | Print matrices A, B, C |
+| `-s` | Random seed |
+| `-o` | Summary CSV name |
+| `-w` | Per-repition timing CSV |
+| `-d` | Per-rank timing CSV |
+
+
+### Experiment Structure ###
+
+|  |  |
+| -------- | -------- |
+| Partition | short-96core |
+| Compiler | GCC 13.2.0 |
+| MPI | OpenMPI 4.1.6 |
+| Repetitions | 100 / 30 / 20 / 5 for N = 64 / 256 / 1024 / 4096 respectively, medians reported |
+| Warmup | At least 3s of untimed running before timing begins |
+| Timing | Maximum time reported across ranks |
+| Serial Baseline | Same kernel dot product, naive triple for loop |
+
+> The warmup is needed for small runs, otherwise the CPU would just be booting up and over before it ramped to full speed.
+
+## Results ##
+
+### Correctness ###
+In all experiments run, the error was 0, meaning all matricies were multiplied correctly, no errors occured.
+
+### Execution Time ###
+
+| N | Serial | $P = 2^2$ | $P = 2^3$ | $P = 2^4$
+| -------- | -------- | -------- | -------- | -------- |
+| $2^6$ | 0.124 ms | 0.040 ms | 0.041 ms | 0.052 ms |
+| $2^8$ | 11.19 ms | 2.92 ms | 1.69 ms | 1.02 ms |
+| $2^10$ | 0.856 ms | 0.218 ms | 0.117 ms | 0.061 ms |
+| $2^12$ | 59.05 s | 14.84 s | 8.06 s | 4.45 s |
+
+### Speedup ###
+$S = T(N,1) / T(N,P)$
+> $T(N,1)$ = Serial
+
+| N | $P = 2^2$ | $P = 2^3$ | $P = 2^4$
+| -------- | -------- | -------- | -------- |
+| $2^6$ | 3.14x | 3.00x | 2.41x |
+| $2^8$ | 3.83x | 6.60x | 10.93x |
+| $2^10$ | 3.93x | 7.33x | 14.12x |
+| $2^12$ | 3.98x | 7.33x | 13.26x |
+
+### Efficiency ###
+$E = S/P$
+
+| N | $P = 2^2$ | $P = 2^3$ | $P = 2^4$
+| -------- | -------- | -------- | -------- |
+| $2^6$ | 0.79 | 0.38 | 0.15 |
+| $2^8$ | 0.96 | 0.83 | 0.68 |
+| $2^{10}$ | 0.98 | 0.92 | 0.88 |
+| $2^{12}$ | 0.99 | 0.92 | 0.83 |
+
+For large N ($N \ge 2^{10}$), scaling is near-linear. At $N = 64$ on the other hand, increasing P has effectively zero change, on the time, since the fixed costs dominate.
+
+
+## Performance Analysis ##
+
+### Amdahl's Law ###
+Amdahl's law states that if a fraction f of a program can't be parallelized, the speedup
+
+$S \le 1 / (f + (1-f)/P)$
+
+If we reverse it to solve for f, we can estimate the fraction of the work that is serial
+
+| N | $P = 2^2$ | $P = 2^3$ | $P = 2^4$
+| -------- | -------- | -------- | -------- |
+| $2^6$ | 9.1% | 23.8% | 37.7% |
+| $2^8$ | 1.5% | 3.0% | 3.1% |
+| $2^10$ | 0.6% | 1.3% | 0.9% |
+| $2^12$ | 0.2% | 1.3% | 1.4% |
+
