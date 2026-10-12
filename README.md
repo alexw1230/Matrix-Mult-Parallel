@@ -124,4 +124,25 @@ IF rank == 0:
     max_err = max |C - C_ref|
     print times, speedup, max_err, Pass/Fail
 
+```
 
+## Repo Structure ##
+```
+Matrix-Mult-Parallel/
+├── src/
+│   ├── kernel.c           # dot product, serial basline, transpose, and other functions
+│   ├── kernel.h           
+│   ├── main.c             # Args, data gen, scatter/gather, timing, verification, and output
+│   ├── mm_ring.c          # The ring algorithm
+│   └── mm_ring.h
+│       
+├── Make/                  
+│   └── Makerfile
+├── Images/                # Images for README
+├── Bash/
+│   └── *.sh               # Various bash files for testing
+│                               
+├── README.md
+├── .gitignore
+└── requirements.txt
+```
