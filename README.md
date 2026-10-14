@@ -153,7 +153,7 @@ Matrix-Mult-Parallel/
 > Run from repo root
 
 ```
-sbatch *.sh
+sbatch Bash/*.sh
 ```
 
 Where * is the experiment you wish to run.
@@ -194,10 +194,10 @@ The following arguments can be applied to the run
 | MPI | OpenMPI 4.1.6 |
 | Repetitions | 100 / 30 / 20 / 5 for N = 64 / 256 / 1024 / 4096 respectively, medians reported |
 | Warmup | At least 3s of untimed running before timing begins |
-| Timing | Maximum time reported across ranks |
-| Serial Baseline | Same kernel dot product, naive triple for loop |
+| Timing | Maximum time reported across ranks, scatter -> gather |
+| Serial Baseline | Same kernel dot product, naive for loop implementation |
 
-> The warmup is needed for small runs, otherwise the CPU would just be booting up and over before it ramped to full speed.
+> The warmup is needed for small runs, otherwise the run would finish before the CPU would ramp up to full clock speed
 
 ## Results ##
 
@@ -210,8 +210,8 @@ In all experiments run, the error was 0, meaning all matricies were multiplied c
 | -------- | -------- | -------- | -------- | -------- |
 | $2^6$ | 0.124 ms | 0.040 ms | 0.041 ms | 0.052 ms |
 | $2^8$ | 11.19 ms | 2.92 ms | 1.69 ms | 1.02 ms |
-| $2^10$ | 0.856 ms | 0.218 ms | 0.117 ms | 0.061 ms |
-| $2^12$ | 59.05 s | 14.84 s | 8.06 s | 4.45 s |
+| $2^{10}$ | 0.856 s | 0.218 s | 0.117 s | 0.061 s |
+| $2^{12}$ | 59.05 s | 14.84 s | 8.06 s | 4.45 s |
 
 ### Speedup ###
 $S = T(N,1) / T(N,P)$
@@ -221,8 +221,8 @@ $S = T(N,1) / T(N,P)$
 | -------- | -------- | -------- | -------- |
 | $2^6$ | 3.14x | 3.00x | 2.41x |
 | $2^8$ | 3.83x | 6.60x | 10.93x |
-| $2^10$ | 3.93x | 7.33x | 14.12x |
-| $2^12$ | 3.98x | 7.33x | 13.26x |
+| $2^{10}$ | 3.93x | 7.33x | 14.12x |
+| $2^{12}$ | 3.98x | 7.33x | 13.26x |
 
 ### Efficiency ###
 $E = S/P$
@@ -246,10 +246,13 @@ $S \le 1 / (f + (1-f)/P)$
 
 If we reverse it to solve for f, we can estimate the fraction of the work that is serial
 
+$f = (1/S - 1/P) / (1 - 1/P)$
+
 | N | $P = 2^2$ | $P = 2^3$ | $P = 2^4$
 | -------- | -------- | -------- | -------- |
 | $2^6$ | 9.1% | 23.8% | 37.7% |
 | $2^8$ | 1.5% | 3.0% | 3.1% |
-| $2^10$ | 0.6% | 1.3% | 0.9% |
-| $2^12$ | 0.2% | 1.3% | 1.4% |
+| $2^{10}$ | 0.6% | 1.3% | 0.9% |
+| $2^{12}$ | 0.2% | 1.3% | 1.4% |
 
+If Amdahl's law held true, $f$ would remain constant as $P$ increases. However, this does not occur because the overhead is not a fixed serial chunk. As P increases, more ring messages have to be sent, and scatter/gather needs to access more ranks. As N grows, f shrinks because the parallel work grows as $O(N^3)$ while the serial and communication work grows as $O(N^2)$.
