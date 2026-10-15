@@ -16,35 +16,16 @@ enum { T_TOTAL, T_SCATTER, T_COMP, T_COMM, T_GATHER, NT };
 
 typedef struct {
     int N, reps, exact, print;
-    double warmup;   /* seconds of untimed reps before timing starts */
+    double warmup;
     long seed;
-    const char *csv; /* summary file (one row per run)          */
-    const char *raw; /* per-rep timings; NULL = don't write one */
-    const char *ranks; /* per-rank timings; NULL = don't collect */
+    const char *csv;
+    const char *raw;
+    const char *ranks;
 } opts_t;
 
-/* Per-rank record gathered to root: the CPU core, then the NT phase times. */
 enum { R_CPU, R_TIMES, NR = R_TIMES + NT };
 
-static void usage(const char *prog)
-{
-    fprintf(stderr,
-            "Usage: mpirun -np P %s -n N [options]\n"
-            "  -n N     matrix size (required; P must divide N)\n"
-            "  -r R     timed repetitions (default depends on N)\n"
-            "  -s S     random seed (default 530)\n"
-            "  -e       exact mode: integer-valued entries, must match serial exactly\n"
-            "  -p       print A, B, C (only if N <= 16)\n"
-            "  -o FILE  summary CSV, appended (default results.csv)\n"
-            "  -w FILE  per-rep timing CSV, appended (default: not written)\n"
-            "  -d FILE  per-rank timing CSV, appended (default: not collected)\n"
-            "  -W SECS  untimed warm-up time before timing (default 3; 0 = one rep)\n",
-            prog);
-}
-
-/* Plain argv loop rather than getopt so every rank parses identically. */
-static int parse_args(int argc, char **argv, opts_t *o)
-{
+static int parse_args(int argc, char **argv, opts_t *o) {
     o->N = 0; o->reps = 0; o->exact = 0; o->print = 0;
     o->seed = 530; o->csv = "results.csv"; o->raw = NULL; o->ranks = NULL;
     o->warmup = 3.0;
@@ -63,28 +44,25 @@ static int parse_args(int argc, char **argv, opts_t *o)
         else if (!strcmp(a, "-p")) o->print = 1;
         else return -1;
     }
-    if (o->N <= 0 || o->reps < 0 || o->warmup < 0) return -1;
+    if (o->N <= 0 || o->reps < 0 || o->warmup < 0) {
+        return -1;
+    }
     return 0;
 }
 
-/* Small N runs in microseconds and needs many reps; large N needs few. */
-static int default_reps(int N)
-{
+static int default_reps(int N) {
     if (N <= 64)   return 100;
     if (N <= 256)  return 30;
     if (N <= 1024) return 5;
     return 3;
 }
 
-static int cmp_double(const void *a, const void *b)
-{
+static int cmp_double(const void *a, const void *b) {
     double x = *(const double *)a, y = *(const double *)b;
     return (x > y) - (x < y);
 }
 
-/* Median of v[0], v[stride], ..., v[(n-1)*stride]. */
-static double median(const double *v, int n, int stride)
-{
+static double median(const double *v, int n, int stride) {
     double *tmp = malloc((size_t)n * sizeof *tmp);
     for (int i = 0; i < n; i++) tmp[i] = v[(size_t)i * stride];
     qsort(tmp, (size_t)n, sizeof *tmp, cmp_double);
@@ -102,9 +80,7 @@ static void print_matrix(const char *name, const double *M, int N)
     }
 }
 
-/* Open for append; write the header first if the file is new or empty. */
-static FILE *open_csv(const char *path, const char *header)
-{
+static FILE *open_csv(const char *path, const char *header) {
     FILE *f = fopen(path, "a");
     if (!f) { perror(path); return NULL; }
     fseek(f, 0, SEEK_END);
@@ -115,8 +91,7 @@ static FILE *open_csv(const char *path, const char *header)
 /* One full multiply: scatter, ring, gather. Fills this rank's phase times. */
 static void one_rep(const double *A, const double *BT, double *CT,
                     double *A_cur, double *BT_loc, double *CT_loc,
-                    int N, int count, MPI_Comm ring, double loc[NT])
-{
+                    int N, int count, MPI_Comm ring, double loc[NT]) {
     ring_times_t rt;
 
     MPI_Barrier(ring);
@@ -139,8 +114,7 @@ static void one_rep(const double *A, const double *BT, double *CT,
     loc[T_GATHER]  = t3 - t2;
 }
 
-static double *must_alloc(size_t count, MPI_Comm comm)
-{
+static double *must_alloc(size_t count, MPI_Comm comm) {
     double *p = alloc_doubles(count);
     if (!p) {
         fprintf(stderr, "allocation of %zu doubles failed\n", count);
@@ -149,11 +123,9 @@ static double *must_alloc(size_t count, MPI_Comm comm)
     return p;
 }
 
-int main(int argc, char **argv)
-{
+int main(int argc, char **argv) {
     MPI_Init(&argc, &argv);
 
-    /* ---- 1-D periodic process topology: the ring ---- */
     int world_size;
     MPI_Comm_size(MPI_COMM_WORLD, &world_size);
     int dims[1] = { world_size }, periods[1] = { 1 };
@@ -164,13 +136,14 @@ int main(int argc, char **argv)
     MPI_Comm_rank(ring, &rank);
     MPI_Comm_size(ring, &P);
 
-    /* ---- Arguments (every rank parses the same argv, so all agree) ---- */
     opts_t o;
     if (parse_args(argc, argv, &o) != 0) {
-        if (rank == 0) usage(argv[0]);
-        MPI_Comm_free(&ring);
-        MPI_Finalize();
-        return 1;
+        if (parse_args(argc, argv, &o) != 0) {
+            if (rank == 0) fprintf(stderr, "bad arguments (-n N is required); see README for options\n");
+            MPI_Comm_free(&ring);
+            MPI_Finalize();
+            return 1;
+        }
     }
     if (o.N % P != 0) {
         if (rank == 0) fprintf(stderr, "P = %d must divide N = %d\n", P, o.N);
@@ -194,7 +167,6 @@ int main(int argc, char **argv)
     int host_len;
     MPI_Get_processor_name(host, &host_len);
 
-    /* ---- Root generates the data (independent of P, so runs are comparable) ---- */
     double *A = NULL, *BT = NULL, *CT = NULL, *C = NULL, *C_ref = NULL;
     if (rank == 0) {
         A     = must_alloc(NN, ring);
@@ -207,27 +179,20 @@ int main(int argc, char **argv)
         rng_seed(o.seed);
         fill_random(A, NN, o.exact);
         fill_random(B, NN, o.exact);
-        transpose(B, BT, N); /* column strips of B = row strips of B^T */
+        transpose(B, BT, N);
         if (o.print && N <= 16) { print_matrix("A", A, N); print_matrix("B", B, N); }
         free(B);
     }
 
-    /* ---- Local strips on every rank ---- */
-    double *A_cur  = must_alloc(strip, ring); /* rolls around the ring */
-    double *BT_loc = must_alloc(strip, ring); /* stays put              */
-    double *CT_loc = must_alloc(strip, ring); /* my column strip of C   */
+    double *A_cur  = must_alloc(strip, ring);
+    double *BT_loc = must_alloc(strip, ring);
+    double *CT_loc = must_alloc(strip, ring);
 
-    /* Root keeps every timed rep: times[rep*NT + phase], max over ranks. */
     double *times = (rank == 0) ? malloc((size_t)o.reps * NT * sizeof *times) : NULL;
 
-    /* Optional: every rank's own times, per rep: per_rank[(rep*P + r)*NR + field]. */
     double *per_rank = (rank == 0 && o.ranks)
                      ? malloc((size_t)o.reps * P * NR * sizeof *per_rank) : NULL;
 
-    /* ---- Untimed warm-up: repeat full reps until o.warmup seconds have passed.
-     * Cores run ~2x slow for the first ~2 s of a run, so one rep is not enough
-     * when a rep is short. At least one warm-up rep always runs. Root decides
-     * when to stop and broadcasts it so every rank leaves the loop together. ---- */
     int warm_reps = 0, more = 1;
     double w0 = MPI_Wtime();
     do {
@@ -238,17 +203,14 @@ int main(int argc, char **argv)
         MPI_Bcast(&more, 1, MPI_INT, 0, ring);
     } while (more);
 
-    /* ---- Timed reps ---- */
     for (int rep = 0; rep < o.reps; rep++) {
         double loc[NT], mx[NT];
         one_rep(A, BT, CT, A_cur, BT_loc, CT_loc, N, count, ring, loc);
         MPI_Reduce(loc, mx, NT, MPI_DOUBLE, MPI_MAX, 0, ring);
 
-        if (rank == 0)
+        if (rank == 0){
             memcpy(times + (size_t)rep * NT, mx, sizeof mx);
-
-        /* Diagnostic: gather every rank's times, not just the max. Runs after
-         * the rep's timed region ends. */
+        }
         if (o.ranks) {
             double rec[NR];
             rec[R_CPU] = (double)sched_getcpu();
@@ -259,7 +221,6 @@ int main(int argc, char **argv)
         }
     }
 
-    /* ---- Root: assemble C, run serial baseline, verify, report ---- */
     if (rank == 0) {
         transpose(CT, C, N);
 
@@ -279,8 +240,6 @@ int main(int argc, char **argv)
             double e = fabs(C[i] - C_ref[i]);
             if (e > max_err) max_err = e;
         }
-        /* Same kernel and summation order -> expect 0. The tolerance only
-         * guards against compiler differences in the normal (float) mode. */
         double tol = o.exact ? 0.0 : 16.0 * N * DBL_EPSILON;
         int pass = (max_err <= tol);
 
