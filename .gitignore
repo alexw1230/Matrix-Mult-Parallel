@@ -2,6 +2,7 @@
 *.err
 *.csv
 /results
+!/results/.gitkeep
 mm
 build/
 *.o
