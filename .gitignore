@@ -1,8 +1,8 @@
 *.out
 *.err
 *.csv
-/results
-!/results/.gitkeep
+results/*
+!results/.gitkeep
 mm
 build/
 *.o
