@@ -7,7 +7,7 @@ Supervisor: Professor Yuefan Deng, AMS Department, Stony Brook University
 ## Project Description ##
 This project implements parallel dense matrix multiplication using MPI and analyzes scaling performance on the SeaWulf supercomputer cluster.
 
-The algorithm implemented is the ring method, or Cannon's algorithm. The algorithm is then tested on `N = {64, 256, 1024, 4096}` and `P = {4, 8, 16}`, where N is the size of the given matrices and P is the number of processes (cores). For accuracy, the result is compared against a serial baseline.
+The algorithm implemented is the ring method, or Cannon's algorithm. The algorithm is then tested on every combination of `N = {64, 256, 1024, 4096}` and `P = {4, 8, 16}`, where N is the size of the given matrices and P is the number of parallel processes (cores). For accuracy and speed, the result is compared against a serial baseline.
 
 ## Problem Statement ##
 Problem 2.3: Design a parallel matrix multiplication using row-wise, column-wise, or block
@@ -46,9 +46,9 @@ A diagram of the data distribution for each processor in a basic $N = P = 3$ mod
 
 ![data_dist](Images/data_dist.png)
 
-As can be seen, each processor has one slice of A and one of B. After performing the dot product, for t = 1 each processor will pass its matrix A information to the next processor along the chain. This process will then repeat until t = P - 1.
+As can be seen, each processor has one slice of A and one of B. After performing the dot product, for $t = 1$ each processor will pass its matrix A information to the next processor along the chain. This process will then repeat until $t = P - 1$.
 
-> Also note for ease of communication B is transposed once in the root, so each column strip of B becomes a row strip of BT, which is easier to send
+> Also note for ease of communication B is transposed once in the root, so each column strip of B becomes a row strip of $B^T$, which is easier to send
 
 ### Load Balancing ###
 Since $P$ divides $N$, the work is equally distributed amongst all $P$ ranks. Each rank:
@@ -259,7 +259,7 @@ If Amdahl's law held true, $f$ would remain constant as $P$ increases. However, 
 
 ### Large N, P Performance Dip ###
 
-One weird observation was the decrease in efficiency at ($N$,$P$) = ($2^{12}$, $2^{4}$) compared to ($2^{10}$, $2^{4}$), as it should increase since $N/P$ is greater.
+One weird observation was the decrease in efficiency at $(N,P) = (2^{12}, 2^{4})$ compared to $(2^{10}, 2^{4})$, as it should increase since $N/P$ is greater.
 
 To answer this, I investigated each rank's compute time individually.
 
