@@ -130,14 +130,14 @@ IF rank == 0:
 ```
 Matrix-Mult-Parallel/
 ├── src/
-│   ├── kernel.c           # dot product, serial basline, transpose, and other functions
+│   ├── kernel.c           # dot product, serial baseline, transpose, and other functions
 │   ├── kernel.h           
 │   ├── main.c             # Args, data gen, scatter/gather, timing, verification, and output
 │   ├── mm_ring.c          # The ring algorithm
 │   └── mm_ring.h
 │       
 ├── Make/                  
-│   └── Makerfile
+│   └── Makefile
 ├── Images/                # Images for README
 ├── Bash/
 │   └── *.sh               # Various bash files for testing
@@ -175,13 +175,13 @@ The following arguments can be applied to the run
 | Flag | Meaning |
 | -------- | -------- |
 | `-n` | Matrix size |
-| `-r` | Number of timed repititions |
+| `-r` | Number of timed repetitions |
 | `-W` | Untimed warmup time before timed runs |
 | `-e` | Exact mode |
 | `-p` | Print matrices A, B, C |
 | `-s` | Random seed |
 | `-o` | Summary CSV name |
-| `-w` | Per-repition timing CSV |
+| `-w` | Per-repetition timing CSV |
 | `-d` | Per-rank timing CSV |
 
 
@@ -202,7 +202,7 @@ The following arguments can be applied to the run
 ## Results ##
 
 ### Correctness ###
-In all experiments run, the error was 0, meaning all matricies were multiplied correctly, no errors occured.
+In all experiments run, the error was 0, meaning all matrices were multiplied correctly, no errors occurred.
 
 ### Execution Time ###
 
@@ -234,7 +234,7 @@ $E = S/P$
 | $2^{10}$ | 0.98 | 0.92 | 0.88 |
 | $2^{12}$ | 0.99 | 0.92 | 0.83 |
 
-For large N ($N \ge 2^{10}$), scaling is near-linear. At $N = 64$ on the other hand, increasing P has effectively zero change, on the time, since the fixed costs dominate.
+For large N ($N \ge 2^{10}$), scaling is near-linear. At $N = 64$ on the other hand, increasing P actually increases execution time, since a larger fixed costs dominate and the total time is so low due to the relatively tiny amount of computation.
 
 
 ## Performance Analysis ##
@@ -256,3 +256,22 @@ $f = (1/S - 1/P) / (1 - 1/P)$
 | $2^{12}$ | 0.2% | 1.3% | 1.4% |
 
 If Amdahl's law held true, $f$ would remain constant as $P$ increases. However, this does not occur because the overhead is not a fixed serial chunk. As P increases, more ring messages have to be sent, and scatter/gather needs to access more ranks. As N grows, f shrinks because the parallel work grows as $O(N^3)$ while the serial and communication work grows as $O(N^2)$.
+
+### Large N, P Performance Dip ###
+
+One weird observation was the decrease in efficiency at ($N$,$P$) = ($2^{12}$, $2^{4}$) compared to ($2^{10}$, $2^{4}$), as it should increase since $N/P$ is greater.
+
+To answer this, I investigated each rank's compute time individually.
+
+$N = 2^{12}$
+
+| P | Ranks | Compute Time per Rank (s) | Linear Compute Time ($T(N,1) / P$ (s)) | Difference (s) |
+| -------- | -------- | -------- | -------- | -------- |
+| $2^3$ | 0 - 5 | 7.94 | 7.38 | 0.56 |
+| $2^3$ | 6 - 7 | 7.57 | 7.38 | 0.19 |
+| $2^4$ | 0 - 11 | 4.24 | 3.69 | 0.55 |
+| $2^4$ | 12 - 15 | 3.81 | 3.69 | 0.12 |
+
+> Reason for this particular grouping will be seen below
+
+Each rank does identical work, however the ranks seem to split into a slower group and a faster group. The node's AMD EPYC 7643 processors are split into chiplets of 6 cores that share 32MB of L3 cache, as observed from technical specs. Ranks 0-5 and 6-11 each fill a chiplet, while ranks 6-7 at P = $2^{3}$ and 12-15 at $P = {2^4}$ only partly fill a chiplet. This split exactly lines up with the observed compute time per rank. At $N = 2^{12}$, each rank's strips of A and B are 8 MiB or more, so a full chiplet's data exceeds its 32MB L3 and its cores compete for memory bandwidth. At $N = 2^{10}$, the strips mostly fit the cache, so this effect doesn't appear. Since the run is only as fast as its slowest rank, the slower full chiplet ranks set the overall speed, which pulls efficiency for $N = 2^{12}$ lower than $N = 2^{10}$ at P = $2^4$ despite theory saying otherwise.
